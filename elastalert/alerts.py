@@ -1121,6 +1121,26 @@ class SlackAlerter(Alerter):
         self.slack_ignore_ssl_errors = self.rule.get('slack_ignore_ssl_errors', False)
         self.slack_timeout = self.rule.get('slack_timeout', 10)
 
+    def _compile_channel_name(self, slack_channel_override):
+        missing = ''
+        if 'slack_channel_override_args' in self.rule:
+            slack_channel_override_args = self.rule.get('slack_channel_override_args')
+            slack_channel_override_values = [lookup_es_key(self.match, arg) for arg in slack_channel_override_args]
+
+            # Support referencing other top-level rule properties
+            # This technically may not work if there is a top-level rule property with the same name
+            # as an es result key, since it would have been matched in the lookup_es_key call above
+            for i, text_value in enumerate(slack_channel_override_values):
+                if text_value is None:
+                    alert_value = self.rule.get(slack_channel_override_args[i])
+                    if alert_value:
+                        slack_channel_override_values[i] = alert_value
+
+            slack_channel_override_values = [missing if val is None else val for val in slack_channel_override_values]
+            slack_channel_override = slack_channel_override.format(*slack_channel_override_values)
+        return slack_channel_override
+
+
     def format_body(self, body):
         # https://api.slack.com/docs/formatting
         return body.encode('UTF-8')
@@ -1184,7 +1204,7 @@ class SlackAlerter(Alerter):
                 try:
                     if self.slack_ignore_ssl_errors:
                         requests.packages.urllib3.disable_warnings()
-                    payload['channel'] = channel_override
+                    payload['channel'] = self._compile_channel_name(channel_override)
                     response = requests.post(
                         url, data=json.dumps(payload, cls=DateTimeEncoder),
                         headers=headers, verify=not self.slack_ignore_ssl_errors,
